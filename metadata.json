@@ -1,0 +1,6 @@
+{
+  "name": "灵感胶囊",
+  "description": "极简、无感登录的随手记录闪念与灵感时光胶囊工具",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -4,10 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>灵感胶囊 Inspiration Capsule</title>
+    <style>
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    </style>
   </head>
   <body class="bg-slate-950 text-slate-100 overflow-x-hidden">
-    <div id="root"></div>
+    <div id="root">
+      <div style="min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; background-color:#020617; color:#94a3b8; font-family:system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif; text-align:center; padding:20px;">
+        <div style="width:36px; height:36px; border:3px solid #a855f7; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; margin-bottom:14px;"></div>
+        <div style="font-size:14px; color:#e2e8f0; font-weight:600; letter-spacing:0.02em;">灵感胶囊加载中...</div>
+        <div style="font-size:11px; color:#64748b; margin-top:6px;">Inspiration Capsule · 极速启动</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
+
 

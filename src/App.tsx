@@ -94,8 +94,8 @@ export default function App() {
   };
 
   // Load / Sync capsules when spaceCode changes or on auto-sync
-  const loadSpaceCapsules = useCallback(async (code: string) => {
-    setIsSyncing(true);
+  const loadSpaceCapsules = useCallback(async (code: string, silent = false) => {
+    if (!silent) setIsSyncing(true);
     try {
       // 1. Instantly populate from local backup if state is empty
       const localData = getLocalBackup(code);
@@ -114,7 +114,7 @@ export default function App() {
     } catch (err) {
       console.error('Error syncing capsules:', err);
     } finally {
-      setIsSyncing(false);
+      if (!silent) setIsSyncing(false);
     }
   }, []);
 
@@ -135,14 +135,19 @@ export default function App() {
   useEffect(() => {
     loadSpaceCapsules(spaceCode);
 
-    // Refetch/Sync when user switches back to window or tab (multi-device sync)
+    // Auto-poll every 3.5s for real-time multi-device synchronization
+    const intervalId = setInterval(() => {
+      loadSpaceCapsules(spaceCode, true);
+    }, 3500);
+
+    // Refetch/Sync when user switches back to window or tab
     const handleFocus = () => {
-      loadSpaceCapsules(spaceCode);
+      loadSpaceCapsules(spaceCode, true);
     };
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        loadSpaceCapsules(spaceCode);
+        loadSpaceCapsules(spaceCode, true);
       }
     };
 
@@ -150,6 +155,7 @@ export default function App() {
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
+      clearInterval(intervalId);
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };

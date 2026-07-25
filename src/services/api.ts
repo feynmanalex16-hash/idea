@@ -262,33 +262,41 @@ export function saveDraft(spaceCode: string, text: string) {
 const DELETED_QUEUE_PREFIX = 'capsule_deleted_queue_';
 const LAST_SYNC_PREFIX = 'capsule_last_sync_';
 
+function cleanSpaceCode(code: string): string {
+  return (code || '').trim().toLowerCase();
+}
+
 function getDeletedQueue(spaceCode: string): string[] {
+  const code = cleanSpaceCode(spaceCode);
   try {
-    const raw = localStorage.getItem(`${DELETED_QUEUE_PREFIX}${spaceCode}`);
+    const raw = localStorage.getItem(`${DELETED_QUEUE_PREFIX}${code}`);
     if (raw) return JSON.parse(raw);
   } catch {}
   return [];
 }
 
 function addToDeletedQueue(spaceCode: string, id: string) {
+  const code = cleanSpaceCode(spaceCode);
   try {
-    const queue = getDeletedQueue(spaceCode);
+    const queue = getDeletedQueue(code);
     if (!queue.includes(id)) {
       queue.push(id);
-      localStorage.setItem(`${DELETED_QUEUE_PREFIX}${spaceCode}`, JSON.stringify(queue));
+      localStorage.setItem(`${DELETED_QUEUE_PREFIX}${code}`, JSON.stringify(queue));
     }
   } catch {}
 }
 
 function clearDeletedQueue(spaceCode: string) {
+  const code = cleanSpaceCode(spaceCode);
   try {
-    localStorage.removeItem(`${DELETED_QUEUE_PREFIX}${spaceCode}`);
+    localStorage.removeItem(`${DELETED_QUEUE_PREFIX}${code}`);
   } catch {}
 }
 
 function getLastSyncTimestamp(spaceCode: string): number {
+  const code = cleanSpaceCode(spaceCode);
   try {
-    const raw = localStorage.getItem(`${LAST_SYNC_PREFIX}${spaceCode}`);
+    const raw = localStorage.getItem(`${LAST_SYNC_PREFIX}${code}`);
     return raw ? parseInt(raw, 10) || 0 : 0;
   } catch {
     return 0;
@@ -296,14 +304,16 @@ function getLastSyncTimestamp(spaceCode: string): number {
 }
 
 function setLastSyncTimestamp(spaceCode: string, ts: number) {
+  const code = cleanSpaceCode(spaceCode);
   try {
-    localStorage.setItem(`${LAST_SYNC_PREFIX}${spaceCode}`, String(ts));
+    localStorage.setItem(`${LAST_SYNC_PREFIX}${code}`, String(ts));
   } catch {}
 }
 
 export function getLocalBackup(spaceCode: string): Capsule[] {
+  const code = cleanSpaceCode(spaceCode);
   try {
-    const raw = localStorage.getItem(`${LOCAL_CAPSULES_PREFIX}${spaceCode}`);
+    const raw = localStorage.getItem(`${LOCAL_CAPSULES_PREFIX}${code}`);
     if (raw) return JSON.parse(raw);
   } catch {
     // Ignore
@@ -312,8 +322,9 @@ export function getLocalBackup(spaceCode: string): Capsule[] {
 }
 
 function saveLocalBackup(spaceCode: string, capsules: Capsule[]) {
+  const code = cleanSpaceCode(spaceCode);
   try {
-    localStorage.setItem(`${LOCAL_CAPSULES_PREFIX}${spaceCode}`, JSON.stringify(capsules));
+    localStorage.setItem(`${LOCAL_CAPSULES_PREFIX}${code}`, JSON.stringify(capsules));
   } catch {
     // Ignore
   }

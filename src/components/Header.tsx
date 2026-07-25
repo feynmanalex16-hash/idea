@@ -100,23 +100,23 @@ export const Header: React.FC<HeaderProps> = ({
           </motion.button>
 
           {/* Space Code Pill */}
-          <div className="hidden sm:flex items-center bg-slate-900/90 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-slate-300 hover:border-slate-700 transition">
+          <div className="flex items-center bg-slate-900/90 border border-slate-800 rounded-xl px-2 py-1.5 sm:px-2.5 sm:py-1.5 text-xs text-slate-300 hover:border-slate-700 transition">
             <button
               onClick={onOpenSpaceModal}
               title="点击切换或修改空间代号"
-              className="flex items-center gap-1.5 font-mono text-purple-300 hover:text-purple-200 font-semibold cursor-pointer max-w-[90px] md:max-w-[130px] truncate"
+              className="flex items-center gap-1 font-mono text-purple-300 hover:text-purple-200 font-semibold cursor-pointer max-w-[70px] xs:max-w-[100px] sm:max-w-[130px] truncate"
             >
-              <span className="text-slate-500 text-[11px]">空间:</span>
-              <span>{spaceCode}</span>
+              <span className="text-slate-500 text-[10px] sm:text-[11px] hidden xs:inline">空间:</span>
+              <span className="truncate">{spaceCode}</span>
               <Edit3 className="w-3 h-3 text-slate-400 hover:text-slate-200 shrink-0" />
             </button>
 
-            <div className="w-[1px] h-3.5 bg-slate-800 mx-2"></div>
+            <div className="w-[1px] h-3.5 bg-slate-800 mx-1.5 sm:mx-2"></div>
 
             <button
               onClick={onCopySpaceCode}
               title="复制当前空间代号 (用于跨设备同步)"
-              className="p-1 text-slate-400 hover:text-purple-300 rounded transition cursor-pointer"
+              className="p-1 text-slate-400 hover:text-purple-300 rounded transition cursor-pointer shrink-0"
             >
               <Copy className="w-3.5 h-3.5" />
             </button>

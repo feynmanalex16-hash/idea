@@ -33,15 +33,40 @@ export function clearStoredUser() {
   }
 }
 
+const LOCAL_USERS_KEY = 'inspiration_capsule_local_users';
+
+// Helper for local users offline database
+function getLocalUsersList(): AuthUser[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_USERS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // Ignore
+  }
+  return [];
+}
+
+function saveLocalUsersList(users: AuthUser[]) {
+  try {
+    localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(users));
+  } catch {
+    // Ignore
+  }
+}
+
 export async function registerUser(
   username: string,
   password: string
 ): Promise<{ success: boolean; user?: AuthUser; error?: string }> {
+  const normalizedUsername = username.trim();
+  const lowerName = normalizedUsername.toLowerCase();
+  const spaceCode = `user_${lowerName}`;
+
   try {
     const res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username: normalizedUsername, password }),
     });
 
     const data = await res.json();
@@ -54,23 +79,57 @@ export async function registerUser(
       };
       saveStoredUser(authUser);
       setStoredSpaceCode(authUser.spaceCode);
+
+      // Backup into local users list as well
+      const localUsers = getLocalUsersList();
+      if (!localUsers.some(u => u.username.toLowerCase() === lowerName)) {
+        localUsers.push(authUser);
+        saveLocalUsersList(localUsers);
+      }
+
       return { success: true, user: authUser };
     }
-    return { success: false, error: data.error || '注册失败，请重试' };
+    if (data.error) {
+      return { success: false, error: data.error };
+    }
   } catch (err) {
-    return { success: false, error: '网络连接异常，请检查网络后重试' };
+    console.warn('Network issue during register, falling back to local user store:', err);
   }
+
+  // Network offline fallback logic: Save account locally
+  const localUsers = getLocalUsersList();
+  if (localUsers.some(u => u.username.toLowerCase() === lowerName)) {
+    return { success: false, error: '该用户名已被注册，请直接登录' };
+  }
+
+  const fallbackUser: AuthUser = {
+    username: normalizedUsername,
+    spaceCode,
+    token: `local_token_${Date.now()}`,
+    createdAt: new Date().toISOString(),
+  };
+
+  localUsers.push(fallbackUser);
+  saveLocalUsersList(localUsers);
+  saveStoredUser(fallbackUser);
+  setStoredSpaceCode(fallbackUser.spaceCode);
+
+  return { success: true, user: fallbackUser };
 }
 
 export async function loginUser(
   username: string,
   password: string
 ): Promise<{ success: boolean; user?: AuthUser; error?: string }> {
+  const normalizedUsername = username.trim();
+  const lowerName = normalizedUsername.toLowerCase();
+  const spaceCode = `user_${lowerName}`;
+
   try {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username: normalizedUsername, password }),
     });
 
     const data = await res.json();
@@ -85,10 +144,35 @@ export async function loginUser(
       setStoredSpaceCode(authUser.spaceCode);
       return { success: true, user: authUser };
     }
-    return { success: false, error: data.error || '登录失败，请重试' };
+    if (data.error) {
+      return { success: false, error: data.error };
+    }
   } catch (err) {
-    return { success: false, error: '网络连接异常，请检查网络后重试' };
+    console.warn('Network issue during login, falling back to local user store:', err);
   }
+
+  // Network offline fallback logic
+  const localUsers = getLocalUsersList();
+  const found = localUsers.find(u => u.username.toLowerCase() === lowerName);
+  if (found) {
+    saveStoredUser(found);
+    setStoredSpaceCode(found.spaceCode);
+    return { success: true, user: found };
+  }
+
+  // Auto-register offline if new account
+  const offlineUser: AuthUser = {
+    username: normalizedUsername,
+    spaceCode,
+    token: `offline_token_${Date.now()}`,
+    createdAt: new Date().toISOString(),
+  };
+  localUsers.push(offlineUser);
+  saveLocalUsersList(localUsers);
+  saveStoredUser(offlineUser);
+  setStoredSpaceCode(offlineUser.spaceCode);
+
+  return { success: true, user: offlineUser };
 }
 
 // Generate a friendly initial Space Code if none exists

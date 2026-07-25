@@ -38,7 +38,7 @@ export const PosterModal: React.FC<PosterModalProps> = ({
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.9 }}
-          className="relative z-10 w-full max-w-md rounded-3xl bg-slate-900 border border-slate-700/80 p-6 sm:p-7 shadow-2xl overflow-hidden"
+          className="relative z-10 w-full max-w-md rounded-3xl bg-slate-900 border border-slate-700/80 p-6 sm:p-7 shadow-2xl overflow-y-auto max-h-[90vh]"
         >
           {/* Close button */}
           <button

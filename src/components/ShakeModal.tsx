@@ -94,7 +94,7 @@ export const ShakeModal: React.FC<ShakeModalProps> = ({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.85, y: 20 }}
           transition={{ type: 'spring', damping: 22, stiffness: 260 }}
-          className="relative z-10 w-full max-w-lg rounded-3xl bg-slate-900 border border-slate-700/80 p-6 sm:p-8 shadow-2xl overflow-hidden"
+          className="relative z-10 w-full max-w-lg rounded-3xl bg-slate-900 border border-slate-700/80 p-6 sm:p-8 shadow-2xl overflow-y-auto max-h-[90vh]"
         >
           {/* Ambient background glow according to card color */}
           <div

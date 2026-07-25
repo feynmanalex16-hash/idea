@@ -16,6 +16,7 @@ import {
   toggleFavorite,
   getStoredUser,
   clearStoredUser,
+  migrateGuestCapsulesToUser,
 } from './services/api';
 import { soundEffects } from './utils/audio';
 
@@ -63,10 +64,17 @@ export default function App() {
   };
 
   // Auth Callbacks
-  const handleLoginSuccess = (user: AuthUser) => {
+  const handleLoginSuccess = async (user: AuthUser) => {
+    const previousSpaceCode = spaceCode;
     setCurrentUser(user);
     setSpaceCode(user.spaceCode);
-    addToast(`欢迎回来，${user.username}！`, 'success', `已切换至专属账号空间 (${user.spaceCode})`);
+
+    // If logging in from a guest space, migrate guest capsules to user account
+    if (previousSpaceCode && !previousSpaceCode.startsWith('user_')) {
+      await migrateGuestCapsulesToUser(previousSpaceCode, user.spaceCode);
+    }
+
+    addToast(`欢迎回来，${user.username}！`, 'success', `账号已同步归仓 (${user.spaceCode})`);
   };
 
   const handleLogout = () => {
@@ -77,21 +85,46 @@ export default function App() {
     addToast('已退出登录', 'info', '已切换回独立访客空间');
   };
 
-  // Load capsules when spaceCode changes
-  const loadSpaceCapsules = useCallback(async (code: string) => {
-    setLoading(true);
+  // Load capsules when spaceCode changes or on auto-sync
+  const loadSpaceCapsules = useCallback(async (code: string, silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const data = await fetchCapsules(code);
       setCapsules(data);
     } catch (err) {
       console.error('Error loading capsules:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     loadSpaceCapsules(spaceCode);
+
+    // Auto-poll every 4 seconds for multi-device / multi-tab real-time sync
+    const intervalId = setInterval(() => {
+      loadSpaceCapsules(spaceCode, true);
+    }, 4000);
+
+    // Refetch instantly when user switches back to window or tab
+    const handleFocus = () => {
+      loadSpaceCapsules(spaceCode, true);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadSpaceCapsules(spaceCode, true);
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [spaceCode, loadSpaceCapsules]);
 
   // Switch space code

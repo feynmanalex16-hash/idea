@@ -274,8 +274,67 @@ function saveLocalBackup(spaceCode: string, capsules: Capsule[]) {
 }
 
 // API Service Functions
+export async function migrateGuestCapsulesToUser(guestSpaceCode: string, userSpaceCode: string) {
+  if (!guestSpaceCode || guestSpaceCode.startsWith('user_') || guestSpaceCode === userSpaceCode) {
+    return;
+  }
+  const guestBackup = getLocalBackup(guestSpaceCode);
+  
+  let allGuestCapsules = [...guestBackup];
+  try {
+    const res = await fetch(`/api/space/${encodeURIComponent(guestSpaceCode)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && Array.isArray(data.capsules)) {
+        const map = new Map(allGuestCapsules.map(c => [c.id, c]));
+        for (const c of data.capsules) {
+          map.set(c.id, c);
+        }
+        allGuestCapsules = Array.from(map.values());
+      }
+    }
+  } catch {
+    // Ignore fetch error
+  }
+
+  if (allGuestCapsules.length > 0) {
+    try {
+      await fetch(`/api/space/${encodeURIComponent(userSpaceCode)}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientCapsules: allGuestCapsules }),
+      });
+      // Clear local backup of guest space
+      localStorage.removeItem(`${LOCAL_CAPSULES_PREFIX}${guestSpaceCode}`);
+    } catch (err) {
+      console.warn('Failed to migrate guest capsules:', err);
+    }
+  }
+}
+
 export async function fetchCapsules(spaceCode: string): Promise<Capsule[]> {
   try {
+    // Check if there are local offline capsules for this spaceCode to merge to server
+    const localBackup = getLocalBackup(spaceCode);
+    if (localBackup.length > 0) {
+      try {
+        const syncRes = await fetch(`/api/space/${encodeURIComponent(spaceCode)}/sync`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientCapsules: localBackup }),
+        });
+        if (syncRes.ok) {
+          const syncData = await syncRes.json();
+          if (syncData.success && Array.isArray(syncData.capsules)) {
+            saveLocalBackup(spaceCode, syncData.capsules);
+            return syncData.capsules;
+          }
+        }
+      } catch {
+        // Ignore sync error, proceed to standard fetch
+      }
+    }
+
     const res = await fetch(`/api/space/${encodeURIComponent(spaceCode)}`);
     if (res.ok) {
       const data = await res.json();

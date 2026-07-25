@@ -133,12 +133,28 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Check if URL has ?space= or ?code= query parameter
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const urlCode = params.get('space') || params.get('code');
+      if (urlCode && urlCode.trim()) {
+        const cleanCode = urlCode.trim().toLowerCase();
+        if (cleanCode !== spaceCode) {
+          setStoredSpaceCode(cleanCode);
+          setSpaceCode(cleanCode);
+          addToast('已通过链接自动加入多端同步空间', 'success', `当前空间: ${cleanCode}`);
+        }
+      }
+    }
+  }, []);
+
+  useEffect(() => {
     loadSpaceCapsules(spaceCode);
 
-    // Auto-poll every 3.5s for real-time multi-device synchronization
+    // Auto-poll every 3s for real-time multi-device synchronization
     const intervalId = setInterval(() => {
       loadSpaceCapsules(spaceCode, true);
-    }, 3500);
+    }, 3000);
 
     // Refetch/Sync when user switches back to window or tab
     const handleFocus = () => {

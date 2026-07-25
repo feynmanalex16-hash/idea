@@ -185,6 +185,17 @@ export function generateRandomSpaceCode(): string {
 
 export function getStoredSpaceCode(): string {
   try {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const urlCode = params.get('space') || params.get('code');
+      if (urlCode && urlCode.trim()) {
+        const normalized = urlCode.trim().toLowerCase();
+        localStorage.setItem(SPACE_CODE_KEY, normalized);
+        addRecentSpaceCode(normalized);
+        return normalized;
+      }
+    }
+
     const user = getStoredUser();
     if (user && user.spaceCode) {
       return user.spaceCode.trim().toLowerCase();

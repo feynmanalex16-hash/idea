@@ -10,7 +10,10 @@ import { Capsule, CapsuleColor, AuthUser } from './types';
 import {
   getStoredSpaceCode,
   setStoredSpaceCode,
+  generateRandomSpaceCode,
   fetchCapsules,
+  syncCapsulesWithServer,
+  getLocalBackup,
   addCapsule,
   deleteCapsule,
   toggleFavorite,
@@ -35,8 +38,9 @@ import { ToastContainer, ToastMessage } from './components/Toast';
 export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => getStoredUser());
   const [spaceCode, setSpaceCode] = useState<string>(() => getStoredSpaceCode());
-  const [capsules, setCapsules] = useState<Capsule[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [capsules, setCapsules] = useState<Capsule[]>(() => getLocalBackup(getStoredSpaceCode()));
+  const [loading, setLoading] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
 
   // Active Bottom Navigation Tab: 'input' | 'library' | 'shake'
@@ -66,54 +70,79 @@ export default function App() {
   // Auth Callbacks
   const handleLoginSuccess = async (user: AuthUser) => {
     const previousSpaceCode = spaceCode;
-    setCurrentUser(user);
-    setSpaceCode(user.spaceCode);
 
-    // If logging in from a guest space, migrate guest capsules to user account
+    // If logging in from a guest space, migrate guest capsules to user account on server first
     if (previousSpaceCode && !previousSpaceCode.startsWith('user_')) {
       await migrateGuestCapsulesToUser(previousSpaceCode, user.spaceCode);
     }
 
-    addToast(`欢迎回来，${user.username}！`, 'success', `账号已同步归仓 (${user.spaceCode})`);
+    setCurrentUser(user);
+    setSpaceCode(user.spaceCode);
+    await loadSpaceCapsules(user.spaceCode);
+
+    addToast(`欢迎回来，${user.username}！`, 'success', `账号数据已双向归仓 (${user.spaceCode})`);
   };
 
   const handleLogout = () => {
     clearStoredUser();
     setCurrentUser(null);
-    const newCode = getStoredSpaceCode();
-    setSpaceCode(newCode);
+    const newGuestCode = generateRandomSpaceCode();
+    setStoredSpaceCode(newGuestCode);
+    setSpaceCode(newGuestCode);
+    setCapsules(getLocalBackup(newGuestCode));
     addToast('已退出登录', 'info', '已切换回独立访客空间');
   };
 
-  // Load capsules when spaceCode changes or on auto-sync
-  const loadSpaceCapsules = useCallback(async (code: string, silent = false) => {
-    if (!silent) setLoading(true);
+  // Load / Sync capsules when spaceCode changes or on auto-sync
+  const loadSpaceCapsules = useCallback(async (code: string) => {
+    setIsSyncing(true);
     try {
-      const data = await fetchCapsules(code);
-      setCapsules(data);
+      // 1. Instantly populate from local backup if state is empty
+      const localData = getLocalBackup(code);
+      if (localData.length > 0) {
+        setCapsules((prev) => (prev.length === 0 ? localData : prev));
+      }
+
+      // 2. Perform 2-way server merge sync
+      const data = await syncCapsulesWithServer(code);
+      setCapsules((prev) => {
+        if (JSON.stringify(prev) === JSON.stringify(data)) {
+          return prev;
+        }
+        return data;
+      });
     } catch (err) {
-      console.error('Error loading capsules:', err);
+      console.error('Error syncing capsules:', err);
     } finally {
-      if (!silent) setLoading(false);
+      setIsSyncing(false);
     }
   }, []);
+
+  // Manual sync button trigger
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    try {
+      const data = await syncCapsulesWithServer(spaceCode);
+      setCapsules(data);
+      addToast('多端双向同步完成！', 'success', `已为您整合全量灵感胶囊 (${data.length} 条)`);
+    } catch (err) {
+      addToast('同步失败，请检查网络连接', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   useEffect(() => {
     loadSpaceCapsules(spaceCode);
 
-    // Auto-poll every 4 seconds for multi-device / multi-tab real-time sync
-    const intervalId = setInterval(() => {
-      loadSpaceCapsules(spaceCode, true);
-    }, 4000);
-
-    // Refetch instantly when user switches back to window or tab
+    // Refetch/Sync when user switches back to window or tab (multi-device sync)
     const handleFocus = () => {
-      loadSpaceCapsules(spaceCode, true);
+      loadSpaceCapsules(spaceCode);
     };
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        loadSpaceCapsules(spaceCode, true);
+        loadSpaceCapsules(spaceCode);
       }
     };
 
@@ -121,7 +150,6 @@ export default function App() {
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      clearInterval(intervalId);
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
@@ -223,6 +251,8 @@ export default function App() {
         spaceCode={spaceCode}
         totalCapsules={capsules.length}
         currentUser={currentUser}
+        isSyncing={isSyncing}
+        onSyncData={handleManualSync}
         onOpenSpaceModal={() => setIsSpaceModalOpen(true)}
         onOpenAuthModal={() => setIsAuthModalOpen(true)}
         onTriggerShake={handleTriggerShake}

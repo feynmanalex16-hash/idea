@@ -185,6 +185,10 @@ export function generateRandomSpaceCode(): string {
 
 export function getStoredSpaceCode(): string {
   try {
+    const user = getStoredUser();
+    if (user && user.spaceCode) {
+      return user.spaceCode.trim().toLowerCase();
+    }
     const code = localStorage.getItem(SPACE_CODE_KEY);
     if (code && code.trim()) {
       return code.trim().toLowerCase();
@@ -255,7 +259,49 @@ export function saveDraft(spaceCode: string, text: string) {
 }
 
 // LocalStorage mirror helpers
-function getLocalBackup(spaceCode: string): Capsule[] {
+const DELETED_QUEUE_PREFIX = 'capsule_deleted_queue_';
+const LAST_SYNC_PREFIX = 'capsule_last_sync_';
+
+function getDeletedQueue(spaceCode: string): string[] {
+  try {
+    const raw = localStorage.getItem(`${DELETED_QUEUE_PREFIX}${spaceCode}`);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return [];
+}
+
+function addToDeletedQueue(spaceCode: string, id: string) {
+  try {
+    const queue = getDeletedQueue(spaceCode);
+    if (!queue.includes(id)) {
+      queue.push(id);
+      localStorage.setItem(`${DELETED_QUEUE_PREFIX}${spaceCode}`, JSON.stringify(queue));
+    }
+  } catch {}
+}
+
+function clearDeletedQueue(spaceCode: string) {
+  try {
+    localStorage.removeItem(`${DELETED_QUEUE_PREFIX}${spaceCode}`);
+  } catch {}
+}
+
+function getLastSyncTimestamp(spaceCode: string): number {
+  try {
+    const raw = localStorage.getItem(`${LAST_SYNC_PREFIX}${spaceCode}`);
+    return raw ? parseInt(raw, 10) || 0 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function setLastSyncTimestamp(spaceCode: string, ts: number) {
+  try {
+    localStorage.setItem(`${LAST_SYNC_PREFIX}${spaceCode}`, String(ts));
+  } catch {}
+}
+
+export function getLocalBackup(spaceCode: string): Capsule[] {
   try {
     const raw = localStorage.getItem(`${LOCAL_CAPSULES_PREFIX}${spaceCode}`);
     if (raw) return JSON.parse(raw);
@@ -312,41 +358,62 @@ export async function migrateGuestCapsulesToUser(guestSpaceCode: string, userSpa
   }
 }
 
-export async function fetchCapsules(spaceCode: string): Promise<Capsule[]> {
-  try {
-    // Check if there are local offline capsules for this spaceCode to merge to server
-    const localBackup = getLocalBackup(spaceCode);
-    if (localBackup.length > 0) {
-      try {
-        const syncRes = await fetch(`/api/space/${encodeURIComponent(spaceCode)}/sync`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ clientCapsules: localBackup }),
-        });
-        if (syncRes.ok) {
-          const syncData = await syncRes.json();
-          if (syncData.success && Array.isArray(syncData.capsules)) {
-            saveLocalBackup(spaceCode, syncData.capsules);
-            return syncData.capsules;
-          }
-        }
-      } catch {
-        // Ignore sync error, proceed to standard fetch
-      }
-    }
+export async function syncCapsulesWithServer(spaceCode: string): Promise<Capsule[]> {
+  const localItems = getLocalBackup(spaceCode);
+  const lastSyncTimestamp = getLastSyncTimestamp(spaceCode);
+  const deletedQueue = getDeletedQueue(spaceCode);
 
-    const res = await fetch(`/api/space/${encodeURIComponent(spaceCode)}`);
+  try {
+    const res = await fetch(`/api/space/${encodeURIComponent(spaceCode)}/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lastSyncTimestamp,
+        clientCapsules: localItems,
+        deletedIds: deletedQueue,
+      }),
+    });
+
     if (res.ok) {
       const data = await res.json();
-      if (data.success && Array.isArray(data.capsules)) {
-        saveLocalBackup(spaceCode, data.capsules);
-        return data.capsules;
+      if (data.success) {
+        // Clear queue of deleted IDs sent to server
+        if (deletedQueue.length > 0) {
+          clearDeletedQueue(spaceCode);
+        }
+
+        // Update server timestamp token
+        if (data.serverTimestamp) {
+          setLastSyncTimestamp(spaceCode, data.serverTimestamp);
+        }
+
+        // Fast path: No changes on server
+        if (data.hasChanges === false) {
+          return localItems;
+        }
+
+        // Processing updated capsules & server tombstones
+        if (Array.isArray(data.capsules)) {
+          let updatedList = data.capsules;
+
+          if (Array.isArray(data.deletedIds) && data.deletedIds.length > 0) {
+            const deleteSet = new Set(data.deletedIds);
+            updatedList = updatedList.filter((c: Capsule) => !deleteSet.has(c.id));
+          }
+
+          saveLocalBackup(spaceCode, updatedList);
+          return updatedList;
+        }
       }
     }
   } catch (err) {
-    console.warn('Network offline or endpoint unreachable, using local backup', err);
+    console.warn('Sync with server failed, using local backup:', err);
   }
-  return getLocalBackup(spaceCode);
+  return localItems;
+}
+
+export async function fetchCapsules(spaceCode: string): Promise<Capsule[]> {
+  return syncCapsulesWithServer(spaceCode);
 }
 
 export async function addCapsule(
@@ -356,11 +423,13 @@ export async function addCapsule(
   tags: string[] = []
 ): Promise<Capsule> {
   const now = new Date();
+  const nowTs = now.getTime();
   const fallbackCapsule: Capsule = {
-    id: `cap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    id: `cap_${nowTs}_${Math.random().toString(36).substring(2, 7)}`,
     content: content.trim(),
     color,
     createdAt: now.toISOString(),
+    updatedAt: nowTs,
     dateStr: now.toISOString().split('T')[0],
     spaceCode,
     isFavorite: false,
@@ -377,6 +446,14 @@ export async function addCapsule(
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.capsule) {
+        if (data.serverTimestamp) {
+          setLastSyncTimestamp(spaceCode, data.serverTimestamp);
+        }
+        const localItems = getLocalBackup(spaceCode);
+        if (!localItems.some(c => c.id === data.capsule.id)) {
+          localItems.unshift(data.capsule);
+          saveLocalBackup(spaceCode, localItems);
+        }
         return data.capsule;
       }
     }
@@ -392,25 +469,39 @@ export async function addCapsule(
 }
 
 export async function deleteCapsule(spaceCode: string, id: string): Promise<boolean> {
-  let success = false;
+  // Queue deletion locally for offline resilience & sync propagation
+  addToDeletedQueue(spaceCode, id);
+
   try {
     const res = await fetch(`/api/space/${encodeURIComponent(spaceCode)}/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
     if (res.ok) {
-      success = true;
+      const data = await res.json();
+      if (data.serverTimestamp) {
+        setLastSyncTimestamp(spaceCode, data.serverTimestamp);
+      }
     }
   } catch (err) {
     console.warn('Network error on delete', err);
   }
 
-  // Update local backup
+  // Remove from local backup
   const localItems = getLocalBackup(spaceCode).filter(c => c.id !== id);
   saveLocalBackup(spaceCode, localItems);
   return true;
 }
 
 export async function toggleFavorite(spaceCode: string, id: string): Promise<Capsule | null> {
+  const nowTs = Date.now();
+  const localItems = getLocalBackup(spaceCode);
+  const found = localItems.find(c => c.id === id);
+  if (found) {
+    found.isFavorite = !found.isFavorite;
+    found.updatedAt = nowTs;
+    saveLocalBackup(spaceCode, localItems);
+  }
+
   try {
     const res = await fetch(`/api/space/${encodeURIComponent(spaceCode)}/${encodeURIComponent(id)}/favorite`, {
       method: 'PATCH',
@@ -418,6 +509,9 @@ export async function toggleFavorite(spaceCode: string, id: string): Promise<Cap
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.capsule) {
+        if (data.serverTimestamp) {
+          setLastSyncTimestamp(spaceCode, data.serverTimestamp);
+        }
         return data.capsule;
       }
     }
@@ -425,12 +519,5 @@ export async function toggleFavorite(spaceCode: string, id: string): Promise<Cap
     console.warn('Network error on toggle favorite', err);
   }
 
-  const localItems = getLocalBackup(spaceCode);
-  const found = localItems.find(c => c.id === id);
-  if (found) {
-    found.isFavorite = !found.isFavorite;
-    saveLocalBackup(spaceCode, localItems);
-    return found;
-  }
-  return null;
+  return found || null;
 }

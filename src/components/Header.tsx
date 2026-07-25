@@ -1,13 +1,14 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Sparkles, Dices, Copy, Edit3, Volume2, VolumeX, ShieldCheck, User } from 'lucide-react';
+import { Sparkles, Dices, Copy, Edit3, Volume2, VolumeX, ShieldCheck, User, RefreshCw } from 'lucide-react';
 import { AuthUser } from '../types';
-import { soundEffects } from '../utils/audio';
 
 interface HeaderProps {
   spaceCode: string;
   totalCapsules: number;
   currentUser: AuthUser | null;
+  isSyncing?: boolean;
+  onSyncData?: () => void;
   onOpenSpaceModal: () => void;
   onOpenAuthModal: () => void;
   onTriggerShake: () => void;
@@ -20,6 +21,8 @@ export const Header: React.FC<HeaderProps> = ({
   spaceCode,
   totalCapsules,
   currentUser,
+  isSyncing = false,
+  onSyncData,
   onOpenSpaceModal,
   onOpenAuthModal,
   onTriggerShake,
@@ -118,6 +121,21 @@ export const Header: React.FC<HeaderProps> = ({
               <Copy className="w-3.5 h-3.5" />
             </button>
           </div>
+
+          {/* Manual Cloud Sync Button */}
+          {onSyncData && (
+            <button
+              onClick={onSyncData}
+              disabled={isSyncing}
+              title="点击与云端多端双向同步"
+              className="p-2 text-slate-400 hover:text-emerald-300 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-emerald-500/40 transition cursor-pointer flex items-center gap-1.5"
+            >
+              <RefreshCw className={`w-4 h-4 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span className="hidden md:inline text-[11px] text-emerald-300/90 font-medium">
+                {isSyncing ? '同步中' : '双向同步'}
+              </span>
+            </button>
+          )}
 
           {/* Sound Toggle */}
           <button

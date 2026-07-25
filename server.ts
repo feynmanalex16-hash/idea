@@ -9,6 +9,7 @@ interface Capsule {
   content: string;
   color: 'purple' | 'blue' | 'green' | 'amber';
   createdAt: string;
+  updatedAt?: number;
   dateStr: string;
   spaceCode: string;
   isFavorite?: boolean;
@@ -44,6 +45,8 @@ function hashPassword(pass: string): string {
 // In-memory stores initialized from disk
 let memoryCapsules: Capsule[] = [];
 let memoryUsers: User[] = [];
+const memorySpaceTimestamps = new Map<string, number>();
+const memoryDeletedCapsules: Array<{ id: string; spaceCode: string; deletedAt: number }> = [];
 
 try {
   if (fs.existsSync(DATA_FILE)) {
@@ -185,34 +188,46 @@ app.post('/api/space/:spaceCode', (req, res) => {
   }
 
   const now = new Date();
+  const nowTs = now.getTime();
+  const targetCode = spaceCode.toLowerCase();
+
   const newCapsule: Capsule = {
-    id: `cap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    id: `cap_${nowTs}_${Math.random().toString(36).substring(2, 7)}`,
     content: content.trim(),
     color: color || 'purple',
     createdAt: now.toISOString(),
+    updatedAt: nowTs,
     dateStr: now.toISOString().split('T')[0],
-    spaceCode: spaceCode.toLowerCase(),
+    spaceCode: targetCode,
     isFavorite: !!isFavorite,
     tags: Array.isArray(tags) ? tags : [],
   };
 
   memoryCapsules.unshift(newCapsule);
+  memorySpaceTimestamps.set(targetCode, nowTs);
   saveCapsulesToDisk();
 
-  res.json({ success: true, capsule: newCapsule });
+  res.json({ success: true, capsule: newCapsule, serverTimestamp: nowTs });
 });
 
 // Delete capsule
 app.delete('/api/space/:spaceCode/:id', (req, res) => {
   const { spaceCode, id } = req.params;
+  const targetCode = spaceCode.toLowerCase();
   const initialLength = memoryCapsules.length;
+  const nowTs = Date.now();
+
   memoryCapsules = memoryCapsules.filter(
-    c => !(c.id === id && c.spaceCode.toLowerCase() === spaceCode.toLowerCase())
+    c => !(c.id === id && c.spaceCode.toLowerCase() === targetCode)
   );
 
   if (memoryCapsules.length < initialLength) {
+    if (!memoryDeletedCapsules.some(d => d.id === id && d.spaceCode === targetCode)) {
+      memoryDeletedCapsules.push({ id, spaceCode: targetCode, deletedAt: nowTs });
+    }
+    memorySpaceTimestamps.set(targetCode, nowTs);
     saveCapsulesToDisk();
-    res.json({ success: true, deletedId: id });
+    res.json({ success: true, deletedId: id, serverTimestamp: nowTs });
   } else {
     res.status(404).json({ error: 'Capsule not found' });
   }
@@ -221,48 +236,120 @@ app.delete('/api/space/:spaceCode/:id', (req, res) => {
 // Toggle favorite state
 app.patch('/api/space/:spaceCode/:id/favorite', (req, res) => {
   const { spaceCode, id } = req.params;
+  const targetCode = spaceCode.toLowerCase();
   const item = memoryCapsules.find(
-    c => c.id === id && c.spaceCode.toLowerCase() === spaceCode.toLowerCase()
+    c => c.id === id && c.spaceCode.toLowerCase() === targetCode
   );
 
   if (item) {
+    const nowTs = Date.now();
     item.isFavorite = !item.isFavorite;
+    item.updatedAt = nowTs;
+    memorySpaceTimestamps.set(targetCode, nowTs);
     saveCapsulesToDisk();
-    res.json({ success: true, capsule: item });
+    res.json({ success: true, capsule: item, serverTimestamp: nowTs });
   } else {
     res.status(404).json({ error: 'Capsule not found' });
   }
 });
 
-// Batch sync / merge from client
+// Differential Batch Sync / Merge
 app.post('/api/space/:spaceCode/sync', (req, res) => {
   const { spaceCode } = req.params;
-  const { clientCapsules } = req.body;
-
-  if (!Array.isArray(clientCapsules)) {
-    return res.status(400).json({ error: 'Invalid client capsules' });
-  }
-
+  const { lastSyncTimestamp = 0, clientCapsules = [], deletedIds = [] } = req.body;
   const targetCode = spaceCode.toLowerCase();
-  
-  // Existing ids in server memory for this space
-  const serverSpaceItems = memoryCapsules.filter(c => c.spaceCode.toLowerCase() === targetCode);
-  const serverIdMap = new Map(serverSpaceItems.map(c => [c.id, c]));
+  const nowTs = Date.now();
 
-  for (const clientItem of clientCapsules) {
-    if (!clientItem.id || !clientItem.content) continue;
-    clientItem.spaceCode = targetCode;
-    if (!serverIdMap.has(clientItem.id)) {
-      memoryCapsules.push(clientItem);
+  let hasChangesOnServer = false;
+
+  // 1. Process client deletedIds
+  if (Array.isArray(deletedIds) && deletedIds.length > 0) {
+    for (const delId of deletedIds) {
+      const initLen = memoryCapsules.length;
+      memoryCapsules = memoryCapsules.filter(
+        c => !(c.id === delId && c.spaceCode.toLowerCase() === targetCode)
+      );
+      if (memoryCapsules.length < initLen) {
+        hasChangesOnServer = true;
+      }
+      if (!memoryDeletedCapsules.some(d => d.id === delId && d.spaceCode === targetCode)) {
+        memoryDeletedCapsules.push({ id: delId, spaceCode: targetCode, deletedAt: nowTs });
+      }
     }
   }
 
-  // Sort descending by createdAt
-  memoryCapsules.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  saveCapsulesToDisk();
+  // 2. Process client capsules
+  const serverSpaceItems = memoryCapsules.filter(c => c.spaceCode.toLowerCase() === targetCode);
+  const serverIdMap = new Map(serverSpaceItems.map(c => [c.id, c]));
 
+  if (Array.isArray(clientCapsules)) {
+    for (const clientItem of clientCapsules) {
+      if (!clientItem.id || !clientItem.content) continue;
+      clientItem.spaceCode = targetCode;
+      const clientUpdatedAt = clientItem.updatedAt || new Date(clientItem.createdAt).getTime() || nowTs;
+
+      const existingServerItem = serverIdMap.get(clientItem.id);
+      if (!existingServerItem) {
+        // Only insert if it hasn't been deleted on server
+        const isDeletedOnServer = memoryDeletedCapsules.some(
+          d => d.id === clientItem.id && d.spaceCode === targetCode
+        );
+        if (!isDeletedOnServer) {
+          const newCap: Capsule = {
+            ...clientItem,
+            updatedAt: clientUpdatedAt,
+          };
+          memoryCapsules.push(newCap);
+          serverIdMap.set(clientItem.id, newCap);
+          hasChangesOnServer = true;
+        }
+      } else {
+        const serverUpdatedAt = existingServerItem.updatedAt || new Date(existingServerItem.createdAt).getTime() || 0;
+        if (clientUpdatedAt > serverUpdatedAt) {
+          Object.assign(existingServerItem, clientItem, { updatedAt: clientUpdatedAt });
+          hasChangesOnServer = true;
+        }
+      }
+    }
+  }
+
+  if (hasChangesOnServer) {
+    memorySpaceTimestamps.set(targetCode, nowTs);
+    memoryCapsules.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    saveCapsulesToDisk();
+  }
+
+  const spaceLastUpdated = memorySpaceTimestamps.get(targetCode) || 0;
+
+  // 3. Fast Differential Path: If client timestamp is current and no changes made
+  if (
+    lastSyncTimestamp > 0 &&
+    spaceLastUpdated > 0 &&
+    spaceLastUpdated <= lastSyncTimestamp &&
+    !hasChangesOnServer
+  ) {
+    return res.json({
+      success: true,
+      hasChanges: false,
+      serverTimestamp: spaceLastUpdated || nowTs,
+    });
+  }
+
+  // Return full/updated space items and tombstones
   const finalSpaceItems = memoryCapsules.filter(c => c.spaceCode.toLowerCase() === targetCode);
-  res.json({ success: true, capsules: finalSpaceItems });
+  const serverDeletedIds = memoryDeletedCapsules
+    .filter(d => d.spaceCode === targetCode && (lastSyncTimestamp === 0 || d.deletedAt > lastSyncTimestamp))
+    .map(d => d.id);
+
+  const responseTimestamp = memorySpaceTimestamps.get(targetCode) || nowTs;
+
+  res.json({
+    success: true,
+    hasChanges: true,
+    capsules: finalSpaceItems,
+    deletedIds: serverDeletedIds,
+    serverTimestamp: responseTimestamp,
+  });
 });
 
 async function startServer() {

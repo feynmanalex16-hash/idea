@@ -5,6 +5,7 @@ export interface Capsule {
   content: string;
   color: CapsuleColor;
   createdAt: string; // ISO string
+  updatedAt?: number; // Timestamp in ms
   dateStr: string;   // YYYY-MM-DD
   spaceCode: string;
   isFavorite?: boolean;
